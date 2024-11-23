@@ -1,0 +1,112 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+
+void decouper_fichier(const char *nom_fichier, int taille_partie) {
+    int fichier = open(nom_fichier, O_RDONLY);
+    if (fichier == -1) {
+        perror("Erreur lors de l'ouverture du fichier");
+        exit(EXIT_FAILURE);
+    }
+
+    char buffer[1024];
+    int numero_partie = 1;
+    ssize_t bytes_lus;
+
+    while ((bytes_lus = read(fichier, buffer, sizeof(buffer) < taille_partie ? sizeof(buffer) : taille_partie)) > 0) {
+        char nom_partie[256];
+        snprintf(nom_partie, sizeof(nom_partie), "%s.part%d", nom_fichier, numero_partie);
+
+        int partie = open(nom_partie, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (partie == -1) {
+            perror("Erreur lors de la création d'une partie");
+            close(fichier);
+            exit(EXIT_FAILURE);
+        }
+
+        write(partie, buffer, bytes_lus);
+        close(partie);
+
+        taille_partie -= bytes_lus;
+        if (taille_partie <= 0) {
+            taille_partie = atoi(getenv("DEFAULT_SIZE") ?: "1024"); // Taille par défaut
+            numero_partie++;
+        }
+    }
+
+    close(fichier);
+    printf("Fichier découpé avec succès.\n");
+}
+
+void recomposer_fichier(const char *fichier_sortie, int nb_parties, char *fichiers_parties[]) {
+    int sortie = open(fichier_sortie, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (sortie == -1) {
+        perror("Erreur lors de la création du fichier de sortie");
+        exit(EXIT_FAILURE);
+    }
+
+    char buffer[1024];
+    ssize_t bytes_lus;
+
+    for (int i = 0; i < nb_parties; ++i) {
+        int partie = open(fichiers_parties[i], O_RDONLY);
+        if (partie == -1) {
+            perror("Erreur lors de l'ouverture d'une partie");
+            close(sortie);
+            exit(EXIT_FAILURE);
+        }
+
+        while ((bytes_lus = read(partie, buffer, sizeof(buffer))) > 0) {
+            write(sortie, buffer, bytes_lus);
+        }
+        close(partie);
+    }
+
+    close(sortie);
+    printf("Fichiers fusionnés avec succès.\n");
+}
+
+int main(int argc, char *argv[]) {
+    if (argc < 3) {
+        fprintf(stderr, "Usage :\n");
+        fprintf(stderr, "  Pour découper : ./split_join split nom_fichier taille\n");
+        fprintf(stderr, "  Pour fusionner : ./split_join join fichier_sortie part1 part2 ...\n");
+        return 1;
+    }
+
+    if (strcmp(argv[1], "split") == 0) {
+        if (argc != 4) {
+            fprintf(stderr, "Usage : ./split_join split nom_fichier taille\n");
+            return 1;
+        }
+
+        const char *nom_fichier = argv[2];
+        int taille_partie = atoi(argv[3]);
+
+        if (taille_partie <= 0) {
+            fprintf(stderr, "La taille doit être un entier positif.\n");
+            return 1;
+        }
+
+        decouper_fichier(nom_fichier, taille_partie);
+    } else if (strcmp(argv[1], "join") == 0) {
+        if (argc < 4) {
+            fprintf(stderr, "Usage : ./split_join join fichier_sortie part1 part2 ...\n");
+            return 1;
+        }
+
+        const char *fichier_sortie = argv[2];
+        int nb_parties = argc - 3;
+        char **fichiers_parties = &argv[3];
+
+        recomposer_fichier(fichier_sortie, nb_parties, fichiers_parties);
+    } else {
+        fprintf(stderr, "Commande inconnue : %s\n", argv[1]);
+        fprintf(stderr, "Utilisez 'split' ou 'join'.\n");
+        return 1;
+    }
+
+    return 0;
+}
